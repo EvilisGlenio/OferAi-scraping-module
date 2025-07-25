@@ -1,0 +1,61 @@
+# Node.js
+node_modules/
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Logs
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Ambiente
+.env
+.env.local
+.env.*.local
+
+# Dados de scraping (caso salve em arquivos)
+*.csv
+*.json
+*.xlsx
+data/
+output/
+results/
+
+# Sistema
+.DS_Store
+Thumbs.db
+
+# Caches e temporários
+.cache/
+tmp/
+*.tmp
+
+# Editor/IDE
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Playwright (se usar)
+playwright-report/
+test-results/
+playwright/.cache/
+playwright/.playwright/
+
+# Puppeteer (se usar)
+.chromium/
+
+# Docker (se usar)
+.docker/
+docker-compose.override.yml
+*.tar
+*.img
+Dockerfile.*
+
+# Outros
+*.swp
+*.bak
