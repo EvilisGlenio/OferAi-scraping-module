@@ -1,4 +1,4 @@
-import { Browser, chromium } from "playwright";
+import { Browser, chromium, Page } from "playwright";
 
 interface ScrapedItemData {
   title: string;
@@ -7,6 +7,58 @@ interface ScrapedItemData {
   imageUrl?: string;
   productUrl?: string;
   category?: string;
+}
+
+async function safeGetTextContent(
+  page: Page,
+  selector: string,
+  retries: number = 3,
+  delay = 1000
+): Promise<string | null> {
+  for (let i = 0; i < retries; i++) {
+    try {
+      await page.waitForSelector(selector, { timeout: 5000 }); // Espera até 5 seguindos
+      const element = await page.locator(selector).first();
+      const text = await element.textContent();
+      return text?.trim() || null; // Retorna null se o texto for vazio ou null
+    } catch (error) {
+      console.warn(
+        `Tentativa ${i + 1} falhou para o seletor "${selector}": ${error}`
+      );
+      if (i === retries - 1) {
+        return null;
+      }
+      await page.waitForTimeout(delay); // Espera amtes de tentar novamente
+    }
+  }
+  return null; // Retorna null se falhar após todas as tentativas
+}
+
+async function safeGetAttribute(
+  page: Page,
+  selector: string,
+  attribute: string,
+  retries: number = 3,
+  delay: number = 1000
+): Promise<string | null> {
+  for (let i = 0; i < retries; i++) {
+    try {
+      await page.waitForSelector(selector, { timeout: 5000 });
+      const element = await page.locator(selector).first();
+      const value = await element.getAttribute(attribute);
+      return value?.trim() || null;
+    } catch (error) {
+      console.warn(
+        `Tentativa ${
+          i + 1
+        } falhou para o seletor "${selector}" e atributo "${attribute}": ${error}`
+      );
+      if (i < retries - 1) {
+        await page.waitForTimeout(delay);
+      }
+    }
+  }
+  return null;
 }
 
 async function scrapeProducts(url: string): Promise<ScrapedItemData | null> {
@@ -20,16 +72,15 @@ async function scrapeProducts(url: string): Promise<ScrapedItemData | null> {
     await page.waitForSelector("span#productTitle");
 
     // Extração dos dados
-    const title = await page.locator("span#productTitle").textContent();
-    const textPrice = await page
-      .locator(
-        "div#corePriceDisplay_desktop_feature_div div.a-section span.a-price span span.a-price-whole"
-      )
-      .textContent();
+    const title = await safeGetTextContent(page, "span#productTitle");
+    const textPrice = await safeGetTextContent(
+      page,
+      "div#corePriceDisplay_desktop_feature_div div.a-section span.a-price span span.a-price-whole"
+    );
     const price = textPrice
       ? parseFloat(textPrice.replace(/R\$\s*/g, "").replace(",", "."))
       : 0;
-    const imageUrl = await page.locator("#landingImage").getAttribute("src");
+    const imageUrl = await safeGetAttribute(page, "#landingImage", "src");
     const productUrl = page.url();
 
     // // Extração da descrição do elemento <div id="feature-bullets">
@@ -38,12 +89,13 @@ async function scrapeProducts(url: string): Promise<ScrapedItemData | null> {
       .allTextContents();
     const description = descriptionItems.map((item) => item.trim()).join(" ");
 
-    const category = await page
-      .locator(
-        "div#wayfinding-breadcrumbs_feature_div ul.a-unordered-list li span.a-list-item a.a-link-normal"
-      )
-      .last()
-      .textContent(); // Extrai a última categoria do breadcrumb
+    const category =
+      (await safeGetTextContent(
+        page,
+        "div#wayfinding-breadcrumbs_feature_div ul.a-unordered-list li span.a-list-item a.a-link-normal",
+        3,
+        1000
+      )) || "Processadores"; // Extrai a última categoria do breadcrumb
 
     if (title && price && imageUrl && productUrl) {
       const scrapedItem: ScrapedItemData = {

@@ -10,6 +10,45 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 const playwright_1 = require("playwright");
+function safeGetTextContent(page_1, selector_1) {
+    return __awaiter(this, arguments, void 0, function* (page, selector, retries = 3, delay = 1000) {
+        for (let i = 0; i < retries; i++) {
+            try {
+                yield page.waitForSelector(selector, { timeout: 5000 }); // Espera até 5 seguindos
+                const element = yield page.locator(selector).first();
+                const text = yield element.textContent();
+                return (text === null || text === void 0 ? void 0 : text.trim()) || null; // Retorna null se o texto for vazio ou null
+            }
+            catch (error) {
+                console.warn(`Tentativa ${i + 1} falhou para o seletor "${selector}": ${error}`);
+                if (i === retries - 1) {
+                    return null;
+                }
+                yield page.waitForTimeout(delay); // Espera amtes de tentar novamente
+            }
+        }
+        return null; // Retorna null se falhar após todas as tentativas
+    });
+}
+function safeGetAttribute(page_1, selector_1, attribute_1) {
+    return __awaiter(this, arguments, void 0, function* (page, selector, attribute, retries = 3, delay = 1000) {
+        for (let i = 0; i < retries; i++) {
+            try {
+                yield page.waitForSelector(selector, { timeout: 5000 });
+                const element = yield page.locator(selector).first();
+                const value = yield element.getAttribute(attribute);
+                return (value === null || value === void 0 ? void 0 : value.trim()) || null;
+            }
+            catch (error) {
+                console.warn(`Tentativa ${i + 1} falhou para o seletor "${selector}" e atributo "${attribute}": ${error}`);
+                if (i < retries - 1) {
+                    yield page.waitForTimeout(delay);
+                }
+            }
+        }
+        return null;
+    });
+}
 function scrapeProducts(url) {
     return __awaiter(this, void 0, void 0, function* () {
         let browser;
@@ -20,24 +59,19 @@ function scrapeProducts(url) {
             // Aguarda o seletor do título estar visível para garantir que a página carregou
             yield page.waitForSelector("span#productTitle");
             // Extração dos dados
-            const title = yield page.locator("span#productTitle").textContent();
-            const textPrice = yield page
-                .locator("div#corePriceDisplay_desktop_feature_div div.a-section span.a-price span span.a-price-whole")
-                .textContent();
+            const title = yield safeGetTextContent(page, "span#productTitle");
+            const textPrice = yield safeGetTextContent(page, "div#corePriceDisplay_desktop_feature_div div.a-section span.a-price span span.a-price-whole");
             const price = textPrice
                 ? parseFloat(textPrice.replace(/R\$\s*/g, "").replace(",", "."))
                 : 0;
-            const imageUrl = yield page.locator("#landingImage").getAttribute("src");
+            const imageUrl = yield safeGetAttribute(page, "#landingImage", "src");
             const productUrl = page.url();
             // // Extração da descrição do elemento <div id="feature-bullets">
             const descriptionItems = yield page
                 .locator("div#feature-bullets ul.a-unordered-list li span.a-list-item")
                 .allTextContents();
             const description = descriptionItems.map((item) => item.trim()).join(" ");
-            const category = yield page
-                .locator("div#wayfinding-breadcrumbs_feature_div ul.a-unordered-list li span.a-list-item a.a-link-normal")
-                .last()
-                .textContent(); // Extrai a última categoria do breadcrumb
+            const category = (yield safeGetTextContent(page, "div#wayfinding-breadcrumbs_feature_div ul.a-unordered-list li span.a-list-item a.a-link-normal", 3, 1000)) || "Processadores"; // Extrai a última categoria do breadcrumb
             if (title && price && imageUrl && productUrl) {
                 const scrapedItem = {
                     title: title.trim(),
