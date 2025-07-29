@@ -1,6 +1,6 @@
 import { Browser, chromium, Page } from "playwright";
 
-interface ScrapedItemData {
+export interface ScrapedItemData {
   title: string;
   description?: string;
   price?: number;
