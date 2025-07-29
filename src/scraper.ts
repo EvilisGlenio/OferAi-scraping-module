@@ -1,4 +1,5 @@
 import { Browser, chromium, Page } from "playwright";
+import { sendDataToBackend } from "./api-client";
 
 export interface ScrapedItemData {
   title: string;
@@ -9,29 +10,36 @@ export interface ScrapedItemData {
   category?: string;
 }
 
+/**
+ * Extrai texto de um elemento da página com retries para lidar com carregamento assíncrono.
+ * @param page Página do Playwright
+ * @param selector Seletor CSS do elemento
+ * @param retries Número de tentativas (padrão: 3)
+ * @param delay Atraso entre tentativas em ms (padrão: 1000)
+ * @returns Texto do elemento ou null se falhar
+ */
 async function safeGetTextContent(
   page: Page,
   selector: string,
   retries: number = 3,
-  delay = 1000
+  delay: number = 1000
 ): Promise<string | null> {
   for (let i = 0; i < retries; i++) {
     try {
-      await page.waitForSelector(selector, { timeout: 5000 }); // Espera até 5 seguindos
-      const element = await page.locator(selector).first();
+      await page.waitForSelector(selector, { timeout: 5000 });
+      const element = page.locator(selector).first();
       const text = await element.textContent();
-      return text?.trim() || null; // Retorna null se o texto for vazio ou null
+      return text?.trim() || null;
     } catch (error) {
       console.warn(
         `Tentativa ${i + 1} falhou para o seletor "${selector}": ${error}`
       );
-      if (i === retries - 1) {
-        return null;
+      if (i < retries - 1) {
+        await page.waitForTimeout(delay);
       }
-      await page.waitForTimeout(delay); // Espera amtes de tentar novamente
     }
   }
-  return null; // Retorna null se falhar após todas as tentativas
+  return null;
 }
 
 async function safeGetAttribute(
@@ -61,11 +69,32 @@ async function safeGetAttribute(
   return null;
 }
 
+async function getCategory(page: Page, url: string): Promise<string | null> {
+  const domain = new URL(url).hostname;
+  if (domain.includes("amazon")) {
+    return await safeGetTextContent(
+      page,
+      "div#wayfinding-breadcrumbs_feature_div a.a-link-normal",
+      3,
+      1000
+    );
+  } else if (domain.includes("kabum")) {
+    return await safeGetTextContent(
+      page,
+      "nav.sc-82ae0d7f-0.fQjBZX a",
+      3,
+      1000
+    );
+  }
+  return null;
+}
+
 async function scrapeProducts(url: string): Promise<ScrapedItemData | null> {
   let browser: Browser | undefined;
   try {
     browser = await chromium.launch({ headless: false }); // Use headless: false para depuração visual
     const page = await browser.newPage();
+    page.setDefaultTimeout(30000); // 30 segundos de timeout padrão
     await page.goto(url, { waitUntil: "domcontentloaded" });
 
     // Aguarda o seletor do título estar visível para garantir que a página carregou
@@ -73,12 +102,9 @@ async function scrapeProducts(url: string): Promise<ScrapedItemData | null> {
 
     // Extração dos dados
     const title = await safeGetTextContent(page, "span#productTitle");
-    const textPrice = await safeGetTextContent(
-      page,
-      "div#corePriceDisplay_desktop_feature_div div.a-section span.a-price span span.a-price-whole"
-    );
+    const textPrice = await safeGetTextContent(page, "span.a-price-whole");
     const price = textPrice
-      ? parseFloat(textPrice.replace(/R\$\s*/g, "").replace(",", "."))
+      ? parseFloat(textPrice.replace(/R\$\s*/g, "").replace(",", ".")) || 0
       : 0;
     const imageUrl = await safeGetAttribute(page, "#landingImage", "src");
     const productUrl = page.url();
@@ -89,15 +115,9 @@ async function scrapeProducts(url: string): Promise<ScrapedItemData | null> {
       .allTextContents();
     const description = descriptionItems.map((item) => item.trim()).join(" ");
 
-    const category =
-      (await safeGetTextContent(
-        page,
-        "div#wayfinding-breadcrumbs_feature_div ul.a-unordered-list li span.a-list-item a.a-link-normal",
-        3,
-        1000
-      )) || "Processadores"; // Extrai a última categoria do breadcrumb
+    const category = (await getCategory(page, url)) || "Processadores"; // Extrai a última categoria do breadcrumb
 
-    if (title && price && imageUrl && productUrl) {
+    if (title && imageUrl && productUrl && price !== undefined) {
       const scrapedItem: ScrapedItemData = {
         title: title.trim(),
         description: description?.trim() || undefined,
@@ -106,6 +126,8 @@ async function scrapeProducts(url: string): Promise<ScrapedItemData | null> {
         productUrl,
         category: category?.trim() || "Processadores",
       };
+      console.log("Item raspado:", scrapedItem);
+      await sendDataToBackend(scrapedItem);
       return scrapedItem;
     } else {
       console.error("Alguns dados obrigatórios não foram encontrados.");

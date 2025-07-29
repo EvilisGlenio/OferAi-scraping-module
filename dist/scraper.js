@@ -10,24 +10,32 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 const playwright_1 = require("playwright");
+const api_client_1 = require("./api-client");
+/**
+ * Extrai texto de um elemento da página com retries para lidar com carregamento assíncrono.
+ * @param page Página do Playwright
+ * @param selector Seletor CSS do elemento
+ * @param retries Número de tentativas (padrão: 3)
+ * @param delay Atraso entre tentativas em ms (padrão: 1000)
+ * @returns Texto do elemento ou null se falhar
+ */
 function safeGetTextContent(page_1, selector_1) {
     return __awaiter(this, arguments, void 0, function* (page, selector, retries = 3, delay = 1000) {
         for (let i = 0; i < retries; i++) {
             try {
-                yield page.waitForSelector(selector, { timeout: 5000 }); // Espera até 5 seguindos
-                const element = yield page.locator(selector).first();
+                yield page.waitForSelector(selector, { timeout: 5000 });
+                const element = page.locator(selector).first();
                 const text = yield element.textContent();
-                return (text === null || text === void 0 ? void 0 : text.trim()) || null; // Retorna null se o texto for vazio ou null
+                return (text === null || text === void 0 ? void 0 : text.trim()) || null;
             }
             catch (error) {
                 console.warn(`Tentativa ${i + 1} falhou para o seletor "${selector}": ${error}`);
-                if (i === retries - 1) {
-                    return null;
+                if (i < retries - 1) {
+                    yield page.waitForTimeout(delay);
                 }
-                yield page.waitForTimeout(delay); // Espera amtes de tentar novamente
             }
         }
-        return null; // Retorna null se falhar após todas as tentativas
+        return null;
     });
 }
 function safeGetAttribute(page_1, selector_1, attribute_1) {
@@ -49,20 +57,33 @@ function safeGetAttribute(page_1, selector_1, attribute_1) {
         return null;
     });
 }
+function getCategory(page, url) {
+    return __awaiter(this, void 0, void 0, function* () {
+        const domain = new URL(url).hostname;
+        if (domain.includes("amazon")) {
+            return yield safeGetTextContent(page, "div#wayfinding-breadcrumbs_feature_div a.a-link-normal", 3, 1000);
+        }
+        else if (domain.includes("kabum")) {
+            return yield safeGetTextContent(page, "nav.sc-82ae0d7f-0.fQjBZX a", 3, 1000);
+        }
+        return null;
+    });
+}
 function scrapeProducts(url) {
     return __awaiter(this, void 0, void 0, function* () {
         let browser;
         try {
             browser = yield playwright_1.chromium.launch({ headless: false }); // Use headless: false para depuração visual
             const page = yield browser.newPage();
+            page.setDefaultTimeout(30000); // 30 segundos de timeout padrão
             yield page.goto(url, { waitUntil: "domcontentloaded" });
             // Aguarda o seletor do título estar visível para garantir que a página carregou
             yield page.waitForSelector("span#productTitle");
             // Extração dos dados
             const title = yield safeGetTextContent(page, "span#productTitle");
-            const textPrice = yield safeGetTextContent(page, "div#corePriceDisplay_desktop_feature_div div.a-section span.a-price span span.a-price-whole");
+            const textPrice = yield safeGetTextContent(page, "span.a-price-whole");
             const price = textPrice
-                ? parseFloat(textPrice.replace(/R\$\s*/g, "").replace(",", "."))
+                ? parseFloat(textPrice.replace(/R\$\s*/g, "").replace(",", ".")) || 0
                 : 0;
             const imageUrl = yield safeGetAttribute(page, "#landingImage", "src");
             const productUrl = page.url();
@@ -71,8 +92,8 @@ function scrapeProducts(url) {
                 .locator("div#feature-bullets ul.a-unordered-list li span.a-list-item")
                 .allTextContents();
             const description = descriptionItems.map((item) => item.trim()).join(" ");
-            const category = (yield safeGetTextContent(page, "div#wayfinding-breadcrumbs_feature_div ul.a-unordered-list li span.a-list-item a.a-link-normal", 3, 1000)) || "Processadores"; // Extrai a última categoria do breadcrumb
-            if (title && price && imageUrl && productUrl) {
+            const category = (yield getCategory(page, url)) || "Processadores"; // Extrai a última categoria do breadcrumb
+            if (title && imageUrl && productUrl && price !== undefined) {
                 const scrapedItem = {
                     title: title.trim(),
                     description: (description === null || description === void 0 ? void 0 : description.trim()) || undefined,
@@ -81,6 +102,8 @@ function scrapeProducts(url) {
                     productUrl,
                     category: (category === null || category === void 0 ? void 0 : category.trim()) || "Processadores",
                 };
+                console.log("Item raspado:", scrapedItem);
+                yield (0, api_client_1.sendDataToBackend)(scrapedItem);
                 return scrapedItem;
             }
             else {
